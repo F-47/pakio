@@ -1,0 +1,34 @@
+{
+  "name": "pakio",
+  "version": "1.0.0",
+  "description": "Save, manage, and reuse npm package templates across projects",
+  "type": "module",
+  "bin": {
+    "pakio": "./index.js"
+  },
+  "files": [
+    "index.js",
+    "lib/"
+  ],
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@clack/prompts": "^1.2.0",
+    "@inquirer/search": "^4.1.8",
+    "commander": "^12.1.0"
+  },
+  "keywords": [
+    "npm",
+    "packages",
+    "template",
+    "dependencies",
+    "cli",
+    "dev-tools",
+    "scaffold"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

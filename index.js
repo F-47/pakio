@@ -1,0 +1,288 @@
+#!/usr/bin/env node
+
+const [major] = process.versions.node.split(".").map(Number);
+if (major < 18) {
+  console.error(
+    `pakio requires Node.js 18 or higher. You are running ${process.version}.`,
+  );
+  process.exit(1);
+}
+
+import { intro, log, outro, spinner } from "@clack/prompts";
+import { spawn } from "child_process";
+import { program } from "commander";
+import fs from "fs";
+import path from "path";
+import { runInteractive } from "./lib/interactive.js";
+import {
+  getTemplate,
+  loadTemplates,
+  readProjectPackageJson,
+  saveTemplates,
+} from "./lib/store.js";
+
+function npmInstallAsync(flag, pkg) {
+  return new Promise((resolve, reject) => {
+    const child = spawn("npm", ["install", flag, pkg], {
+      stdio: "pipe",
+      shell: true,
+    });
+    let stderr = "";
+    child.stderr.on("data", (d) => (stderr += d.toString()));
+    child.on("close", (code) => {
+      if (code === 0) resolve();
+      else reject(Object.assign(new Error(`Exit ${code}`), { stderr }));
+    });
+  });
+}
+
+async function installPackages(packages, isDev) {
+  const flag = isDev ? "--save-dev" : "--save";
+  const label = isDev ? "devDependency" : "dependency";
+  let failed = 0;
+
+  for (const pkg of packages) {
+    const s = spinner();
+    s.start(`Installing ${label}: ${pkg}`);
+    try {
+      await npmInstallAsync(flag, pkg);
+      s.stop(`✔ Installed ${pkg}`);
+    } catch (err) {
+      s.stop(`✘ Failed to install ${pkg}`);
+      const stderr = err.stderr?.trim();
+      if (stderr) log.error(stderr);
+      failed++;
+    }
+  }
+
+  return failed;
+}
+
+program
+  .name("pakio")
+  .description("Save, manage, and reuse npm package templates across projects")
+  .version("1.0.0");
+
+// pakio create <template-name>
+program
+  .command("create <name>")
+  .description("Create an empty template")
+  .action((name) => {
+    const templates = loadTemplates();
+    if (templates[name]) {
+      console.error(`Error: Template "${name}" already exists.`);
+      process.exit(1);
+    }
+    templates[name] = { dependencies: [], devDependencies: [] };
+    saveTemplates(templates);
+    console.log(`Template "${name}" created.`);
+  });
+
+// pakio add <template-name> <packages...>
+program
+  .command("add <name> <packages...>")
+  .description("Add packages to a template")
+  .option("-D, --dev", "Add as devDependencies")
+  .action((name, packages, opts) => {
+    const templates = loadTemplates();
+    getTemplate(templates, name); // validates existence
+
+    const key = opts.dev ? "devDependencies" : "dependencies";
+    const existing = new Set(templates[name][key]);
+    const added = [];
+
+    for (const pkg of packages) {
+      if (!existing.has(pkg)) {
+        existing.add(pkg);
+        added.push(pkg);
+      }
+    }
+
+    templates[name][key] = [...existing];
+    saveTemplates(templates);
+
+    if (added.length) {
+      console.log(`Added to "${name}" [${key}]: ${added.join(", ")}`);
+    } else {
+      console.log(`All packages already present in "${name}" [${key}].`);
+    }
+  });
+
+// pakio apply <template-name>
+program
+  .command("apply <name>")
+  .description("Install all packages from a template into the current project")
+  .action(async (name) => {
+    const templates = loadTemplates();
+    const template = getTemplate(templates, name);
+
+    readProjectPackageJson(); // ensures package.json exists
+
+    const { dependencies = [], devDependencies = [] } = template;
+
+    if (!dependencies.length && !devDependencies.length) {
+      log.warn(`Template "${name}" has no packages to install.`);
+      return;
+    }
+
+    const total = dependencies.length + devDependencies.length;
+    intro(`Applying template "${name}" — ${total} package(s) to install`);
+
+    let totalFailed = 0;
+
+    if (dependencies.length) {
+      totalFailed += await installPackages(dependencies, false);
+    }
+
+    if (devDependencies.length) {
+      totalFailed += await installPackages(devDependencies, true);
+    }
+
+    const succeeded = total - totalFailed;
+    if (totalFailed === 0) {
+      outro(
+        `✔ Template "${name}" applied — ${succeeded}/${total} packages installed successfully.`,
+      );
+    } else {
+      outro(
+        `⚠ Template "${name}" applied with issues — ${succeeded}/${total} packages installed (${totalFailed} failed).`,
+      );
+    }
+  });
+
+// pakio import <template-name>
+program
+  .command("import <name>")
+  .description("Import the current project's dependencies into a template")
+  .action((name) => {
+    const pkg = readProjectPackageJson();
+    const templates = loadTemplates();
+
+    const dependencies = Object.keys(pkg.dependencies || {});
+    const devDependencies = Object.keys(pkg.devDependencies || {});
+
+    if (!dependencies.length && !devDependencies.length) {
+      console.log("No dependencies found in current package.json.");
+      return;
+    }
+
+    if (templates[name]) {
+      console.log(`Overwriting existing template "${name}".`);
+    }
+
+    templates[name] = { dependencies, devDependencies };
+    saveTemplates(templates);
+
+    console.log(`Template "${name}" imported.`);
+    if (dependencies.length)
+      console.log(`  dependencies:    ${dependencies.join(", ")}`);
+    if (devDependencies.length)
+      console.log(`  devDependencies: ${devDependencies.join(", ")}`);
+  });
+
+// pakio remove <template-name>
+program
+  .command("remove <name>")
+  .description("Remove a template")
+  .action((name) => {
+    const templates = loadTemplates();
+    getTemplate(templates, name);
+    delete templates[name];
+    saveTemplates(templates);
+    console.log(`Template "${name}" removed.`);
+  });
+
+// pakio export <templates...> --output <file>
+program
+  .command("export [names...]")
+  .description("Export templates to a JSON file")
+  .option("-o, --output <file>", "Output filename", "pakio-export.json")
+  .action((names, opts) => {
+    const templates = loadTemplates();
+    const toExport = names.length ? names : Object.keys(templates);
+
+    if (!toExport.length) {
+      console.error("No templates saved.");
+      process.exit(1);
+    }
+
+    toExport.forEach((n) => getTemplate(templates, n));
+
+    const output = {};
+    toExport.forEach((n) => (output[n] = templates[n]));
+
+    const dest = path.resolve(process.cwd(), opts.output);
+    fs.writeFileSync(dest, JSON.stringify(output, null, 2), "utf8");
+    console.log(`Exported ${toExport.length} template(s) to ${dest}`);
+  });
+
+// pakio import-file <file>
+program
+  .command("import-file <file>")
+  .description("Import templates from a JSON file")
+  .action((file) => {
+    const src = path.resolve(process.cwd(), file);
+    if (!fs.existsSync(src)) {
+      console.error(`File not found: ${src}`);
+      process.exit(1);
+    }
+
+    let incoming;
+    try {
+      incoming = JSON.parse(fs.readFileSync(src, "utf8"));
+    } catch {
+      console.error(
+        "Could not parse file. Make sure it is a valid pakio JSON export.",
+      );
+      process.exit(1);
+    }
+
+    const templates = loadTemplates();
+    const names = Object.keys(incoming);
+
+    names.forEach((n) => (templates[n] = incoming[n]));
+    saveTemplates(templates);
+    console.log(`Imported: ${names.join(", ")}`);
+  });
+
+// pakio list
+program
+  .command("list")
+  .description("List all saved templates")
+  .action(() => {
+    const templates = loadTemplates();
+    const names = Object.keys(templates);
+
+    if (!names.length) {
+      console.log("No templates saved. Run: pakio create <name>");
+      return;
+    }
+
+    console.log(`Saved templates (${names.length}):\n`);
+    for (const name of names) {
+      const { dependencies = [], devDependencies = [] } = templates[name];
+      console.log(`  ${name}`);
+      if (dependencies.length)
+        console.log(`    dependencies:    ${dependencies.join(", ")}`);
+      if (devDependencies.length)
+        console.log(`    devDependencies: ${devDependencies.join(", ")}`);
+      if (!dependencies.length && !devDependencies.length)
+        console.log("    (empty)");
+    }
+  });
+
+const hasSubcommand = process.argv.slice(2).length > 0;
+
+if (hasSubcommand) {
+  try {
+    program.parse();
+  } catch (err) {
+    console.error(`Error: ${err.message}`);
+    process.exit(1);
+  }
+} else {
+  runInteractive().catch((err) => {
+    console.error(`Error: ${err.message}`);
+    process.exit(1);
+  });
+}
