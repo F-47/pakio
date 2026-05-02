@@ -1,6 +1,6 @@
 {
   "name": "@f47/pakio",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Save, manage, and reuse npm package templates across projects",
   "type": "module",
   "bin": {
