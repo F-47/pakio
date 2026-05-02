@@ -7,7 +7,14 @@ Instead of remembering which packages you install on every new project, pakio le
 ## Install
 
 ```bash
-npm install -g pakio
+# npm
+npm install -g @f47/pakio
+
+# yarn
+yarn global add @f47/pakio
+
+# pnpm
+pnpm add -g @f47/pakio
 ```
 
 ## Usage
@@ -23,8 +30,11 @@ Or use commands directly:
 ```bash
 pakio create <name>
 pakio add <name> <packages...>
-pakio apply <name>
+pakio remove-pkg <name> <packages...>
+pakio apply <name> [--dev] [--deps]
+pakio diff <name>
 pakio list
+pakio rename <old-name> <new-name>
 pakio remove <name>
 pakio export [names...] --output <file>
 pakio import-file <file>
@@ -65,6 +75,20 @@ pakio add react-base axios zustand
 pakio add react-base -D eslint prettier typescript
 ```
 
+To remove packages or manage them more finely, use the **interactive menu**.
+
+### Rename a template
+
+```bash
+pakio rename react-base react-core
+```
+
+### Remove packages from a template
+
+```bash
+pakio remove-pkg react-base axios zustand
+```
+
 In interactive mode, packages are searched live from npm — results include name, version, and description.
 
 ### Apply a template
@@ -75,7 +99,40 @@ Run inside a project that already has a `package.json`:
 pakio apply react-base
 ```
 
-Installs all dependencies and devDependencies from the template using npm.
+Installs all dependencies and devDependencies from the template using your project's detected package manager (npm, yarn, or pnpm).
+
+**Flags:**
+
+- `--dev`: Only install `devDependencies`.
+- `--deps`: Only install `dependencies`.
+
+Example:
+
+```bash
+pakio apply react-base --dev
+```
+
+### Compare template with project (Diff)
+
+See what's missing or different before applying:
+
+```bash
+pakio diff react-base
+```
+
+Output:
+
+```
+◆  Diff for template "react-base"
+│
+●  Missing dependencies:
+│  + axios@1.7.9
+│
+●  Different versions:
+│  ~ typescript (current: 5.5.0, template: 5.7.3)
+│
+└  Run `pakio apply <name>` to sync.
+```
 
 ### Import from a project
 

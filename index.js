@@ -9,35 +9,20 @@ if (major < 18) {
 }
 
 import { intro, log, outro, spinner } from "@clack/prompts";
-import { spawn } from "child_process";
 import { program } from "commander";
 import fs from "fs";
 import path from "path";
 import { runInteractive } from "./lib/interactive.js";
+import { installPackageAsync } from "./lib/pm.js";
 import {
   getTemplate,
   loadTemplates,
   readProjectPackageJson,
   saveTemplates,
 } from "./lib/store.js";
-
-function npmInstallAsync(flag, pkg) {
-  return new Promise((resolve, reject) => {
-    const child = spawn("npm", ["install", flag, pkg], {
-      stdio: "pipe",
-      shell: true,
-    });
-    let stderr = "";
-    child.stderr.on("data", (d) => (stderr += d.toString()));
-    child.on("close", (code) => {
-      if (code === 0) resolve();
-      else reject(Object.assign(new Error(`Exit ${code}`), { stderr }));
-    });
-  });
-}
+import { getTemplateDiff } from "./lib/diff.js";
 
 async function installPackages(packages, isDev) {
-  const flag = isDev ? "--save-dev" : "--save";
   const label = isDev ? "devDependency" : "dependency";
   let failed = 0;
 
@@ -45,7 +30,7 @@ async function installPackages(packages, isDev) {
     const s = spinner();
     s.start(`Installing ${label}: ${pkg}`);
     try {
-      await npmInstallAsync(flag, pkg);
+      await installPackageAsync(pkg, isDev);
       s.stop(`✔ Installed ${pkg}`);
     } catch (err) {
       s.stop(`✘ Failed to install ${pkg}`);
@@ -112,16 +97,21 @@ program
 program
   .command("apply <name>")
   .description("Install all packages from a template into the current project")
-  .action(async (name) => {
+  .option("--dev", "Only install devDependencies")
+  .option("--deps", "Only install dependencies")
+  .action(async (name, opts) => {
     const templates = loadTemplates();
     const template = getTemplate(templates, name);
 
     readProjectPackageJson(); // ensures package.json exists
 
-    const { dependencies = [], devDependencies = [] } = template;
+    let { dependencies = [], devDependencies = [] } = template;
+
+    if (opts.dev) dependencies = [];
+    if (opts.deps) devDependencies = [];
 
     if (!dependencies.length && !devDependencies.length) {
-      log.warn(`Template "${name}" has no packages to install.`);
+      log.warn(`No packages to install for "${name}" with current filters.`);
       return;
     }
 
@@ -190,6 +180,93 @@ program
     delete templates[name];
     saveTemplates(templates);
     console.log(`Template "${name}" removed.`);
+  });
+
+// pakio rename <old-name> <new-name>
+program
+  .command("rename <oldName> <newName>")
+  .description("Rename a template")
+  .action((oldName, newName) => {
+    const templates = loadTemplates();
+    getTemplate(templates, oldName);
+
+    if (templates[newName]) {
+      console.error(`Error: Template "${newName}" already exists.`);
+      process.exit(1);
+    }
+
+    templates[newName] = templates[oldName];
+    delete templates[oldName];
+    saveTemplates(templates);
+    console.log(`Template "${oldName}" renamed to "${newName}".`);
+  });
+
+// pakio remove-pkg <template-name> <packages...>
+program
+  .command("remove-pkg <name> <packages...>")
+  .description("Remove packages from a template")
+  .action((name, packages) => {
+    const templates = loadTemplates();
+    const template = getTemplate(templates, name);
+
+    let removed = 0;
+    ["dependencies", "devDependencies"].forEach((key) => {
+      const originalCount = template[key].length;
+      template[key] = template[key].filter((p) => !packages.includes(p));
+      removed += originalCount - template[key].length;
+    });
+
+    if (removed > 0) {
+      saveTemplates(templates);
+      console.log(`Removed ${removed} package(s) from "${name}".`);
+    } else {
+      console.log(`None of the specified packages were found in "${name}".`);
+    }
+  });
+
+// pakio diff <template-name>
+program
+  .command("diff <name>")
+  .description("Compare a template with the current project's dependencies")
+  .action((name) => {
+    const templates = loadTemplates();
+    const template = getTemplate(templates, name);
+    const projectPkg = readProjectPackageJson();
+
+    const diff = getTemplateDiff(template, projectPkg);
+    const hasDiff =
+      diff.missingDeps.length ||
+      diff.missingDevDeps.length ||
+      diff.mismatches.length;
+
+    if (!hasDiff) {
+      log.success(`Project is up to date with template "${name}".`);
+      return;
+    }
+
+    intro(`Diff for template "${name}"`);
+
+    if (diff.missingDeps.length) {
+      log.step("Missing dependencies:");
+      diff.missingDeps.forEach((p) => log.info(`+ ${p}`));
+    }
+
+    if (diff.missingDevDeps.length) {
+      if (diff.missingDeps.length) console.log("");
+      log.step("Missing devDependencies:");
+      diff.missingDevDeps.forEach((p) => log.info(`+ ${p}`));
+    }
+
+    if (diff.mismatches.length) {
+      if (diff.missingDeps.length || diff.missingDevDeps.length)
+        console.log("");
+      log.step("Different versions:");
+      diff.mismatches.forEach((m) =>
+        log.info(`~ ${m.name} (current: ${m.current}, template: ${m.template})`),
+      );
+    }
+
+    outro("Run `pakio apply <name>` to sync.");
   });
 
 // pakio export <templates...> --output <file>

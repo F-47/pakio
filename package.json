@@ -1,5 +1,5 @@
 {
-  "name": "pakio",
+  "name": "@f47/pakio",
   "version": "1.0.0",
   "description": "Save, manage, and reuse npm package templates across projects",
   "type": "module",
@@ -18,6 +18,15 @@
     "@inquirer/search": "^4.1.8",
     "commander": "^12.1.0"
   },
+  "author": "Fares Galal <faresgalal09@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/F-47/pakio.git"
+  },
+  "bugs": {
+    "url": "https://github.com/F-47/pakio/issues"
+  },
+  "homepage": "https://github.com/F-47/pakio#readme",
   "keywords": [
     "npm",
     "packages",
@@ -25,7 +34,15 @@
     "dependencies",
     "cli",
     "dev-tools",
-    "scaffold"
+    "scaffold",
+    "package-manager",
+    "boilerplate",
+    "automation",
+    "workflow",
+    "productivity",
+    "project-setup",
+    "node",
+    "nodejs"
   ],
   "license": "MIT",
   "engines": {
